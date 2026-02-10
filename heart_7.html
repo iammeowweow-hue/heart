@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Heart</title>
+<style>
+body { margin: 0; overflow: hidden; background: #000; cursor: none; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas></canvas>
+<script>
+const c = document.querySelector("canvas");
+const $ = c.getContext("2d");
+let w = c.width = innerWidth;
+let h = c.height = innerHeight;
+
+window.addEventListener("resize", () => { w = c.width = innerWidth; h = c.height = innerHeight; });
+
+let mouse = { x: -9999, y: -9999 };
+c.addEventListener("mousemove", e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+c.addEventListener("mouseleave", () => { mouse.x = -9999; mouse.y = -9999; });
+c.addEventListener("touchmove", e => { e.preventDefault(); mouse.x = e.touches[0].clientX; mouse.y = e.touches[0].clientY; }, { passive: false });
+c.addEventListener("touchend", () => { mouse.x = -9999; mouse.y = -9999; });
+
+function heartX(t) { return 16 * Math.pow(Math.sin(t), 3); }
+function heartY(t) { return -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)); }
+
+const scale = Math.min(w, h) * 0.018;
+const cx = w / 2, cy = h * 0.43;
+const mouseRadius = 100;
+const mouseForce = 8;
+
+// ===== HEART OUTLINE — dense parametric =====
+const targets = [];
+for (let t = 0; t < Math.PI * 2; t += 0.003) {
+  targets.push(cx + heartX(t) * scale, cy + heartY(t) * scale);
+}
+
+// ===== TEXT — sample filled text to offscreen canvas =====
+const fontSize = Math.min(50, w / 12);
+const oc = document.createElement("canvas");
+oc.width = w; oc.height = h;
+const ox = oc.getContext("2d");
+
+// Draw "I" + mini heart + "You" like the reference
+// Mini heart shape
+function drawMiniHeart(ctx, x, y, s) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  ctx.beginPath();
+  for (let t = 0; t < Math.PI * 2; t += 0.05) {
+    let px = heartX(t);
+    let py = heartY(t);
+    if (t === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+ox.textAlign = "center";
+ox.textBaseline = "middle";
+ox.strokeStyle = "white";
+ox.lineWidth = 2;
+ox.font = "bold 55px Arial, sans-serif";
+ox.strokeText("I ♥ You", cx, cy - fontSize * 0.55);
+ox.font = "bold 50px Arial, sans-serif";
+ox.strokeText("Аминат", cx, cy + fontSize * 0.65);
+
+const img = ox.getImageData(0, 0, w, h);
+const textTargets = [];
+for (let y = 0; y < h; y += 2)
+  for (let x = 0; x < w; x += 2)
+    if (img.data[(y * w + x) * 4] > 128)
+      textTargets.push(x, y);
+
+// ===== BUILD PARTICLES =====
+const total = targets.length / 2 + textTargets.length / 2;
+const px = new Float32Array(total);
+const py = new Float32Array(total);
+const ptx = new Float32Array(total);
+const pty = new Float32Array(total);
+const pvx = new Float32Array(total);
+const pvy = new Float32Array(total);
+
+let idx = 0;
+
+// Heart outline particles
+for (let i = 0; i < targets.length; i += 2) {
+  px[idx] = cx + (Math.random() - 0.5) * w * 2;
+  py[idx] = cy + (Math.random() - 0.5) * h * 2;
+  ptx[idx] = targets[i];
+  pty[idx] = targets[i + 1];
+  idx++;
+}
+
+// Text particles
+for (let i = 0; i < textTargets.length; i += 2) {
+  px[idx] = cx + (Math.random() - 0.5) * w * 2;
+  py[idx] = cy + (Math.random() - 0.5) * h * 2;
+  ptx[idx] = textTargets[i];
+  pty[idx] = textTargets[i + 1];
+  idx++;
+}
+
+const count = idx;
+
+// Trails
+const trails = [];
+const bottomY = cy + 14.4 * scale;
+
+function spawnTrails() {
+  for (let i = 0; i < 3; i++) {
+    trails.push({
+      x: cx + (Math.random() - 0.5) * 15,
+      y: bottomY + Math.random() * 3,
+      vx: (Math.random() - 0.5) * 1.5,
+      vy: Math.random() * 3 + 1.5,
+      life: 1,
+      decay: 0.006 + Math.random() * 0.012
+    });
+  }
+}
+
+let time = 0;
+
+function loop() {
+  $.fillStyle = "rgba(0,0,0,0.18)";
+  $.fillRect(0, 0, w, h);
+  time += 0.016;
+
+  let pulse = 1 + Math.sin(time * 2) * 0.02;
+  let mx = mouse.x, my = mouse.y;
+  let mr2 = mouseRadius * mouseRadius;
+
+  for (let i = 0; i < count; i++) {
+    // Pulsed target
+    let tx = cx + (ptx[i] - cx) * pulse;
+    let ty = cy + (pty[i] - cy) * pulse;
+
+    // Spring - starts very soft, gets stronger over time
+    let stiffness = Math.min(0.06, time * 0.005);
+    let ax = (tx - px[i]) * stiffness;
+    let ay = (ty - py[i]) * stiffness;
+
+    // Mouse repulsion
+    let mdx = px[i] - mx;
+    let mdy = py[i] - my;
+    let d2 = mdx * mdx + mdy * mdy;
+    if (d2 < mr2 && d2 > 0) {
+      let d = Math.sqrt(d2);
+      let f = (mouseRadius - d) / mouseRadius * mouseForce;
+      ax += (mdx / d) * f;
+      ay += (mdy / d) * f;
+    }
+
+    pvx[i] = (pvx[i] + ax) * (0.78 + Math.min(0.07, time * 0.005));
+    pvy[i] = (pvy[i] + ay) * (0.78 + Math.min(0.07, time * 0.005));
+    px[i] += pvx[i];
+    py[i] += pvy[i];
+  }
+
+  // Batch draw all particles — hot pink
+  $.fillStyle = "rgba(255,50,180,0.85)";
+  for (let i = 0; i < count; i++) {
+    $.fillRect(px[i] - 1, py[i] - 1, 2.5, 2.5);
+  }
+
+  // Cursor glow
+  if (mx > 0) {
+    let g = $.createRadialGradient(mx, my, 0, mx, my, mouseRadius);
+    g.addColorStop(0, "rgba(255,100,200,0.06)");
+    g.addColorStop(1, "rgba(255,100,200,0)");
+    $.fillStyle = g;
+    $.beginPath();
+    $.arc(mx, my, mouseRadius, 0, Math.PI * 2);
+    $.fill();
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
